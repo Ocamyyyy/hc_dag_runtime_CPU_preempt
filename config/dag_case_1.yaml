@@ -1,0 +1,66 @@
+# dag_case_1.yaml
+# DAG 1：高优先级硬实时任务（TASK_A）
+# 对应开发日：Day 1（DAG设计）/ Day 2（配置文件框架）
+
+task:
+  task_id:       "TASK_A"
+  task_priority: 1                # 数值越小优先级越高
+  criticality:   "HI"            # 硬实时
+  period_us:     100000          # 100 ms
+  deadline_us:   100000          # 100 ms（相对截止期）
+
+nodes:
+  - node_id:              "A1"
+    node_type:            "CPU"
+    assigned_cpu_core:    1
+    assigned_resource_id: 1
+    wcet_us:              5000
+    pre_exec_us:          0
+    accel_exec_us:        0
+    post_exec_us:         0
+    predecessors:         []
+    successors:           ["A2", "A3"]
+
+  - node_id:              "A2"
+    node_type:            "CPU"
+    assigned_cpu_core:    1
+    assigned_resource_id: 1
+    wcet_us:              10000
+    pre_exec_us:          0
+    accel_exec_us:        0
+    post_exec_us:         0
+    predecessors:         ["A1"]
+    successors:           ["A4"]
+
+  - node_id:              "A3"
+    node_type:            "GPU"
+    assigned_cpu_core:    1        # 节点级绑核：Owner Worker 处理 A3 时切换到 core1
+    assigned_resource_id: 10       # GPU 0
+    wcet_us:              15000    # 总估计时间
+    pre_exec_us:          1000     # CPU前处理
+    accel_exec_us:        13000    # GPU kernel执行
+    post_exec_us:         1000     # CPU后处理
+    predecessors:         ["A1"]
+    successors:           ["A4"]
+
+  - node_id:              "A4"
+    node_type:            "CPU"
+    assigned_cpu_core:    1
+    assigned_resource_id: 1
+    wcet_us:              5000
+    pre_exec_us:          0
+    accel_exec_us:        0
+    post_exec_us:         0
+    predecessors:         ["A2", "A3"]  # 汇合节点
+    successors:           []
+
+edges:
+  - ["A1", "A2"]
+  - ["A1", "A3"]
+  - ["A2", "A4"]
+  - ["A3", "A4"]
+
+# 关键路径分析：
+#   路径1: A1 -> A2 -> A4 = 5+10+5 = 20ms
+#   路径2: A1 -> A3 -> A4 = 5+15+5 = 25ms  ← 关键路径
+#   Slack: 100 - 25 = 75ms（充裕，验证用）

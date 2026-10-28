@@ -1,0 +1,92 @@
+# dag_case_2.yaml
+# DAG 2：低优先级背景负载任务（TASK_B）
+# 对应开发日：Day 1（DAG设计）/ Day 2（配置文件框架）
+#
+# 用途：
+#   - 与 TASK_A 在 GPU 0 上制造共享资源竞争
+#   - 验证高优先级任务在共享资源队列中的优先调度
+#   - 验证不可抢占阻塞时间记录
+
+task:
+  task_id:       "TASK_B"
+  task_priority: 2                # 低优先级（数值大 = 低）
+  criticality:   "LO"            # 软实时
+  period_us:     160000          # 160 ms
+  deadline_us:   160000          # 160 ms
+
+nodes:
+  - node_id:              "B1"
+    node_type:            "CPU"
+    assigned_cpu_core:    2       # TASK_B 专用 CPU 核
+    assigned_resource_id: 2
+    wcet_us:              8000
+    pre_exec_us:          0
+    accel_exec_us:        0
+    post_exec_us:         0
+    predecessors:         []
+    successors:           ["B2", "B3"]
+
+  - node_id:              "B2"
+    node_type:            "CPU"
+    assigned_cpu_core:    2
+    assigned_resource_id: 2
+    wcet_us:              6000
+    pre_exec_us:          0
+    accel_exec_us:        0
+    post_exec_us:         0
+    predecessors:         ["B1"]
+    successors:           ["B4"]
+
+  - node_id:              "B3"
+    node_type:            "GPU"
+    assigned_cpu_core:    2        # 节点级绑核：Owner Worker 处理 B3 时切换到 core2
+    assigned_resource_id: 10      # 与 A3 竞争同一 GPU 0
+    wcet_us:              20000
+    pre_exec_us:          1000
+    accel_exec_us:        18000   # 较长的 kernel，加剧竞争
+    post_exec_us:         1000
+    predecessors:         ["B1"]
+    successors:           ["B5"]
+
+  - node_id:              "B4"
+    node_type:            "CPU"
+    assigned_cpu_core:    2
+    assigned_resource_id: 2
+    wcet_us:              12000
+    pre_exec_us:          0
+    accel_exec_us:        0
+    post_exec_us:         0
+    predecessors:         ["B2"]
+    successors:           ["B5"]
+
+  - node_id:              "B5"
+    node_type:            "CPU"
+    assigned_cpu_core:    2
+    assigned_resource_id: 2
+    wcet_us:              5000
+    pre_exec_us:          0
+    accel_exec_us:        0
+    post_exec_us:         0
+    predecessors:         ["B3", "B4"]  # 汇合节点
+    successors:           []
+
+edges:
+  - ["B1", "B2"]
+  - ["B1", "B3"]
+  - ["B2", "B4"]
+  - ["B3", "B5"]
+  - ["B4", "B5"]
+
+# 关键路径分析：
+#   路径1: B1 -> B3 -> B5 = 8+20+5 = 33ms
+#   路径2: B1 -> B2 -> B4 -> B5 = 8+6+12+5 = 31ms
+#   关键路径 = 33ms，Slack = 160-33 = 127ms
+#
+# GPU 竞争场景（假设 t=0 两任务同时到达）：
+#   t=0:   TASK_A释放, TASK_B释放
+#   t=5:   A1完成 -> A3 ready（HIGH priority）
+#   t=8:   B1完成 -> B3 ready（LOW priority）
+#   GPU队列（按优先级）: [A3(p=1), B3(p=2)]
+#   t≈20:  A3完成（执行了15ms）-> A4 ready
+#   t≈40:  B3完成（等待15ms + 执行20ms）
+#   → B3 的 GPU 等待时间（不可抢占阻塞）= ~15ms = A3的执行时间
