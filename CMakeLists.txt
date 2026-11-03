@@ -1,26 +1,26 @@
 cmake_minimum_required(VERSION 3.10)
 
-# 交叉编译目标平台配置
-SET(CMAKE_SYSTEM_NAME Linux)
-SET(CMAKE_SYSTEM_PROCESSOR aarch64)
-SET(CMAKE_BUILD_TYPE Release)
-
-# 交叉编译工具链
-SET(CMAKE_C_COMPILER   /usr/bin/aarch64-linux-gnu-gcc)
-SET(CMAKE_CXX_COMPILER /usr/bin/aarch64-linux-gnu-g++)
+project(hc_dag_runtime LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
+set(CMAKE_CXX_EXTENSIONS NO)
 
-project(hc_dag_runtime LANGUAGES CXX)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
-# 编译选项
-SET(CMAKE_C_FLAGS_DEBUG   "${CMAKE_C_FLAGS}   -O0 -g -Wall")
-SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} -O0 -g -Wall")
-SET(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS}   -O2 -ffunction-sections -fdata-sections")
-SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} -O2 -ffunction-sections -fdata-sections")
+find_package(Threads REQUIRED)
+include(CTest)
 
-include_directories(./include)
+add_library(execution_backend
+    src/mock_backend.cpp
+    src/rp_state_manager.cpp
+    src/fake_fpga_device_driver.cpp
+    src/fpga_backend.cpp
+)
+target_include_directories(execution_backend PUBLIC include)
+target_link_libraries(execution_backend PUBLIC Threads::Threads)
 
 add_executable(day5_test
     test/day5_test.cpp
@@ -30,4 +30,32 @@ add_executable(day5_test
     src/dispatcher.cpp
 )
 target_include_directories(day5_test PRIVATE include)
-target_link_libraries(day5_test PRIVATE pthread)
+target_link_libraries(day5_test PRIVATE Threads::Threads)
+
+if(BUILD_TESTING)
+    add_executable(mock_backend_test
+        test/mock_backend_test.cpp
+    )
+    target_link_libraries(mock_backend_test PRIVATE execution_backend)
+    add_test(NAME mock_backend_test COMMAND mock_backend_test)
+
+    add_executable(fpga_backend_test
+        test/fpga_backend_test.cpp
+    )
+    target_link_libraries(fpga_backend_test PRIVATE execution_backend)
+    add_test(NAME fpga_backend_test COMMAND fpga_backend_test)
+
+    add_executable(fpga_runtime_integration_test
+        test/fpga_runtime_integration_test.cpp
+        src/task_model.cpp
+        src/runtime_manager.cpp
+        src/scheduler.cpp
+        src/dispatcher.cpp
+    )
+    target_include_directories(fpga_runtime_integration_test PRIVATE include)
+    target_link_libraries(fpga_runtime_integration_test
+        PRIVATE execution_backend Threads::Threads)
+    add_test(NAME fpga_runtime_integration_test
+             COMMAND fpga_runtime_integration_test)
+    add_test(NAME day5_test COMMAND day5_test)
+endif()

@@ -81,10 +81,17 @@ void CpuWorker::worker_loop() {
         // 先发 NODE_COMPLETE（依赖推进，新节点入 Scheduler 队列）
         // 再发 RESOURCE_IDLE（触发 try_dispatch 取下一个任务）
         // 顺序很重要：保证新节点入队在 try_dispatch 之前
-        mgr_->post_event({EventType::NODE_COMPLETE,
-                          ni->job_id, ni->node_id, mgr_->now_us()});
-        mgr_->post_event({EventType::RESOURCE_IDLE,
-                          "", "", mgr_->now_us()});
+        RuntimeEvent complete_event;
+        complete_event.type = EventType::NODE_COMPLETE;
+        complete_event.job_id = ni->job_id;
+        complete_event.node_id = ni->node_id;
+        complete_event.timestamp_us = mgr_->now_us();
+        mgr_->post_event(std::move(complete_event));
+
+        RuntimeEvent idle_event;
+        idle_event.type = EventType::RESOURCE_IDLE;
+        idle_event.timestamp_us = mgr_->now_us();
+        mgr_->post_event(std::move(idle_event));
 
         is_idle_.store(true);
     }
@@ -98,4 +105,54 @@ Dispatcher::Dispatcher(RuntimeManager* mgr) : mgr_(mgr) {}
 
 void Dispatcher::register_cpu_worker(int core, std::shared_ptr<CpuWorker> w) {
     cpu_workers_[core] = std::move(w);
+}
+
+void Dispatcher::register_execution_backend(
+    int resource_id, std::shared_ptr<ExecutionBackend> backend) {
+    backends_[resource_id] = std::move(backend);
+}
+
+BackendSubmission Dispatcher::submit_fpga(NodeInstance* ni) {
+    const int resource_id = ni->tmpl->assigned_resource_id;
+    auto backend_it = backends_.find(resource_id);
+    if (backend_it == backends_.end() || !backend_it->second) {
+        return {SubmitStatus::NOT_INITIALIZED, 0};
+    }
+
+    ExecutionRequest request;
+    request.request_id = next_request_id_.fetch_add(1);
+    request.job_id = ni->job_id;
+    request.node_id = ni->node_id;
+    request.target.node_type = NodeType::FPGA;
+    request.target.resource_id = resource_id;
+    request.target.cpu_core = ni->tmpl->assigned_cpu_core;
+    request.target.rp_id = ni->tmpl->assigned_region_id;
+    request.target.function_id = ni->tmpl->function_id;
+    request.target.configuration_id = ni->tmpl->configuration_id;
+    request.expected_exec_us = ni->tmpl->accel_exec_us > 0
+                                   ? ni->tmpl->accel_exec_us
+                                   : ni->tmpl->wcet_us;
+
+    const uint64_t request_id = request.request_id;
+    SubmitStatus status = backend_it->second->submit(
+        std::move(request),
+        [manager = mgr_](ExecutionResult result) {
+            RuntimeEvent event;
+            event.type = EventType::NODE_COMPLETE;
+            event.job_id = result.job_id;
+            event.node_id = result.node_id;
+            event.timestamp_us = result.end_time_us;
+            event.execution_result = std::move(result);
+            manager->post_event(std::move(event));
+        });
+
+    if (status == SubmitStatus::ACCEPTED) {
+        std::cout << "[Dispatcher] FPGA SUBMIT request=" << request_id
+                  << " node=" << ni->job_id << "/" << ni->node_id
+                  << " resource=" << resource_id
+                  << " rp=" << ni->tmpl->assigned_region_id
+                  << " function=" << ni->tmpl->function_id
+                  << " configuration=" << ni->tmpl->configuration_id << "\n";
+    }
+    return {status, request_id};
 }

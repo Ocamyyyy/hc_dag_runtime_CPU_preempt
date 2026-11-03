@@ -1,5 +1,6 @@
 // include/dispatcher.h
 #pragma once
+#include "backend.h"
 #include "task_model.h"
 #include "runtime_manager.h"
 #include <queue>
@@ -21,6 +22,11 @@ struct WorkerRequest {
             return task_priority > o.task_priority;
         return enqueue_time_us > o.enqueue_time_us;
     }
+};
+
+struct BackendSubmission {
+    SubmitStatus status{SubmitStatus::INVALID_REQUEST};
+    uint64_t request_id{0};
 };
 
 class CpuWorker {
@@ -56,6 +62,9 @@ public:
     explicit Dispatcher(RuntimeManager* mgr);
 
     void register_cpu_worker(int core, std::shared_ptr<CpuWorker> w);
+    void register_execution_backend(
+        int resource_id, std::shared_ptr<ExecutionBackend> backend);
+    BackendSubmission submit_fpga(NodeInstance* ni);
 
     // try_dispatch 调用：遍历所有 CPU Worker
     // 返回本次实际派发的节点数
@@ -65,4 +74,6 @@ public:
 private:
     RuntimeManager* mgr_;
     std::unordered_map<int, std::shared_ptr<CpuWorker>> cpu_workers_;
+    std::unordered_map<int, std::shared_ptr<ExecutionBackend>> backends_;
+    std::atomic<uint64_t> next_request_id_{1};
 };

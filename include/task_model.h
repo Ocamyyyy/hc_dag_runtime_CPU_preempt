@@ -51,6 +51,7 @@ enum class NodeState {
 enum class JobState {
     ACTIVE,
     COMPLETED,
+    FAILED,
     DEADLINE_MISSED
 };
 
@@ -92,6 +93,9 @@ struct NodeTemplate {
      */
     int                 assigned_cpu_core;
     int                 assigned_resource_id;   // 目标资源编号（GPU/FPGA 设备ID）
+    int                 assigned_region_id{-1};
+    int                 function_id{-1};
+    int                 configuration_id{-1};
     int                 wcet_us;                // 最坏执行时间估计（微秒）
 
     // 执行三段式估计（GPU/FPGA节点）
